@@ -1,0 +1,14 @@
+# Yahoo Finance symbols — US large-caps + Indian NSE large-caps (.NS)
+tickers:
+  - AAPL
+  - MSFT
+  - GOOGL
+  - AMZN
+  - NVDA
+  - TSLA
+  - TCS.NS
+  - INFY.NS
+  - RELIANCE.NS
+  - HDFCBANK.NS
+  - ICICIBANK.NS
+  - SBIN.NS

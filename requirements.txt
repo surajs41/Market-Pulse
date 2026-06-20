@@ -1,0 +1,7 @@
+yfinance
+pandas
+pyarrow
+boto3
+apache-airflow-providers-amazon
+python-dotenv
+pyyaml
