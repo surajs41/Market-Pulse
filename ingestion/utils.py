@@ -9,7 +9,13 @@ load_dotenv()
 
 
 def get_minio_client():
-    """Return a boto3 S3 client configured for the local MinIO instance."""
+    """
+    Return a boto3 S3 client configured for the local MinIO instance.
+
+    Endpoint is controlled by MINIO_ENDPOINT:
+      - localhost:9000  when scripts run on the host machine
+      - minio:9000      when scripts run inside Airflow/Docker (docker-compose sets this)
+    """
     endpoint = os.getenv("MINIO_ENDPOINT", "localhost:9000")
     endpoint_url = endpoint if endpoint.startswith("http") else f"http://{endpoint}"
 

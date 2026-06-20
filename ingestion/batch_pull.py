@@ -144,17 +144,19 @@ def process_ticker(
 
 
 def run_batch_pull(
+    tickers: list[str] | None = None,
     tickers_path: Path | None = None,
     bucket: str = DEFAULT_BUCKET,
 ) -> dict[str, int | list[str]]:
     """
-    Run batch ingestion for all configured tickers.
+    Run batch ingestion for the given tickers (or all tickers from config).
 
     Returns a summary dict with keys: total, succeeded, failed, failed_tickers.
     """
     load_dotenv(PROJECT_ROOT / ".env")
 
-    tickers = load_tickers(tickers_path)
+    if tickers is None:
+        tickers = load_tickers(tickers_path)
     ingested_at = datetime.now(timezone.utc)
     run_date = ingested_at.strftime("%Y-%m-%d")
 

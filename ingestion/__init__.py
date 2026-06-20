@@ -1,0 +1,1 @@
+"""MarketPulse ingestion package."""
