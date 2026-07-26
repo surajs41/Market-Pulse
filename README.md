@@ -83,3 +83,86 @@ CLI test (runs the full DAG for a specific date without waiting for the schedule
 ```powershell
 docker compose exec airflow-scheduler airflow dags test marketpulse_batch_ingestion 2025-06-20
 ```
+
+## Streaming Layer
+
+### Why Redpanda?
+
+[Redpanda](https://redpanda.com/) is a Kafka-compatible streaming platform written in C++. It exposes the same producer/consumer API as Apache Kafka, but runs as a single lightweight binary with no ZooKeeper dependency — ideal for local development and portfolio projects where you want real streaming semantics without the operational overhead of a full Kafka cluster.
+
+### Architecture
+
+```
+tick_producer.py  →  Redpanda (market-ticks topic)  →  tick_consumer.py  →  Postgres (streaming.market_ticks)
+```
+
+- **Producer** (`streaming/tick_producer.py`) — fetches the last 5 days of 1-minute OHLCV bars per ticker from Yahoo Finance and publishes JSON tick messages to the `market-ticks` topic, sleeping between messages to simulate a live feed.
+- **Consumer** (`streaming/tick_consumer.py`) — reads from `market-ticks` and batch-inserts rows into `streaming.market_ticks` in Postgres (commits every 10 messages).
+
+**Important:** The tick data is **simulated**, not a real live market feed. The producer replays recent intraday history in a continuous loop. This is intentional for local dev — it lets you build and test the full streaming pipeline without a paid market data API.
+
+Both scripts run on the **host machine** (not inside Docker) and connect to Redpanda via `localhost:9092` (`REDPANDA_BROKERS` in `.env`). Airflow / Docker services use the internal listener `redpanda:29092` (set in `docker-compose.yml`).
+
+### Start Redpanda
+
+Pull and start Redpanda only:
+
+```powershell
+docker compose up -d redpanda
+```
+
+Verify it is healthy:
+
+```powershell
+docker compose ps redpanda
+docker compose exec redpanda curl -f http://localhost:9644/v1/status/ready
+```
+
+Create the `market-ticks` topic (3 partitions, replication factor 1):
+
+```powershell
+docker compose up redpanda-init
+```
+
+Confirm the topic exists:
+
+```powershell
+docker compose exec redpanda rpk topic list --brokers redpanda:29092
+```
+
+### Run producer and consumer
+
+Install Python dependencies (if not already done):
+
+```powershell
+pip install -r requirements.txt
+```
+
+> **Note:** `requirements.txt` pins `kafka-python` to 2.x. Version 3.x pulls in `botocore` at import time and can hang on startup when you only need local Redpanda.
+
+Ensure `.env` is configured (copy from `.env.example` if needed). Postgres must be running:
+
+```powershell
+docker compose up -d postgres
+```
+
+**Terminal 1 — start the consumer:**
+
+```powershell
+python streaming/tick_consumer.py
+```
+
+**Terminal 2 — start the producer:**
+
+```powershell
+python streaming/tick_producer.py
+```
+
+Wait a few seconds, then verify rows are landing in Postgres:
+
+```powershell
+docker compose exec postgres psql -U marketpulse -d marketpulse -c "SELECT COUNT(*) FROM streaming.market_ticks;"
+docker compose exec postgres psql -U marketpulse -d marketpulse -c "SELECT ticker, ts, close, consumed_at FROM streaming.market_ticks ORDER BY id DESC LIMIT 10;"
+```
+
+Stop either script with `Ctrl+C`. The consumer commits every 10 messages and shuts down cleanly on interrupt.

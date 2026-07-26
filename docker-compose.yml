@@ -1,6 +1,7 @@
-# MarketPulse — local Docker stack (Postgres, MinIO, Airflow LocalExecutor)
-# Bring up Postgres + MinIO first:  docker compose up -d postgres minio
-# Full stack (incl. Airflow):       docker compose up -d
+# MarketPulse — local Docker stack (Postgres, MinIO, Redpanda, Airflow LocalExecutor)
+# Bring up storage + streaming first:  docker compose up -d postgres minio redpanda
+# Create the market-ticks topic:       docker compose up redpanda-init
+# Full stack (incl. Airflow):          docker compose up -d
 
 x-airflow-common:
   &airflow-common
@@ -19,6 +20,8 @@ x-airflow-common:
     MINIO_ENDPOINT: minio:9000
     MINIO_ACCESS_KEY: ${MINIO_ROOT_USER}
     MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD}
+    # Redpanda — internal Docker listener (host scripts use localhost:9092 via .env)
+    REDPANDA_BROKERS: redpanda:29092
     # Ingestion dependencies (not included in the base Airflow image)
     _PIP_ADDITIONAL_REQUIREMENTS: yfinance pandas pyarrow boto3 pyyaml python-dotenv
   volumes:
@@ -79,6 +82,54 @@ services:
     restart: unless-stopped
     networks:
       - marketpulse-net
+
+  # Dual listeners so host scripts (localhost:9092) and Docker services
+  # (redpanda:29092) both get a reachable advertised broker address.
+  redpanda:
+    image: docker.redpanda.com/redpandadata/redpanda:latest
+    container_name: marketpulse-redpanda
+    command:
+      - redpanda
+      - start
+      - --mode
+      - dev-container
+      - --overprovisioned
+      - --kafka-addr
+      - INTERNAL://0.0.0.0:29092,EXTERNAL://0.0.0.0:9092
+      - --advertise-kafka-addr
+      - INTERNAL://redpanda:29092,EXTERNAL://localhost:9092
+    ports:
+      - "9092:9092"
+      - "9644:9644"
+    volumes:
+      - redpanda-data:/var/lib/redpanda/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:9644/v1/status/ready || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    restart: unless-stopped
+    networks:
+      - marketpulse-net
+
+  redpanda-init:
+    image: docker.redpanda.com/redpandadata/redpanda:latest
+    container_name: marketpulse-redpanda-init
+    depends_on:
+      redpanda:
+        condition: service_healthy
+    entrypoint: /bin/bash
+    command:
+      - -c
+      - |
+        rpk topic create market-ticks \
+          --brokers redpanda:29092 \
+          --partitions 3 \
+          --replicas 1 || true
+    networks:
+      - marketpulse-net
+    restart: "no"
 
   airflow-init:
     <<: *airflow-common
@@ -142,3 +193,5 @@ volumes:
     name: marketpulse-postgres-data
   minio-data:
     name: marketpulse-minio-data
+  redpanda-data:
+    name: marketpulse-redpanda-data

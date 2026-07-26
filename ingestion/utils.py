@@ -3,6 +3,7 @@
 import os
 
 import boto3
+from botocore.exceptions import ClientError
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -35,3 +36,15 @@ def get_minio_client():
         aws_secret_access_key=secret_key,
         region_name="us-east-1",
     )
+
+
+def ensure_bucket(bucket: str) -> None:
+    """Create the MinIO bucket if it does not already exist."""
+    client = get_minio_client()
+    try:
+        client.head_bucket(Bucket=bucket)
+    except ClientError as exc:
+        code = exc.response.get("Error", {}).get("Code")
+        if code not in ("404", "NoSuchBucket"):
+            raise
+        client.create_bucket(Bucket=bucket)

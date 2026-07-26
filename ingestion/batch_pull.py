@@ -25,9 +25,9 @@ import yfinance as yf
 from dotenv import load_dotenv
 
 try:
-    from ingestion.utils import get_minio_client
+    from ingestion.utils import ensure_bucket, get_minio_client
 except ImportError:
-    from utils import get_minio_client
+    from utils import ensure_bucket, get_minio_client
 
 logger = logging.getLogger(__name__)
 
@@ -165,6 +165,8 @@ def run_batch_pull(
         len(tickers),
         run_date,
     )
+
+    ensure_bucket(bucket)
 
     succeeded: list[str] = []
     failed: list[str] = []
