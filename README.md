@@ -12,6 +12,7 @@ The `marketpulse_batch_ingestion` DAG (`dags/batch_ingestion_dag.py`) orchestrat
 
 1. **load_tickers** — reads `config/tickers.yaml` and passes the symbol list via XCom
 2. **run_batch_ingestion** — fetches 2 years of daily OHLCV per ticker and uploads Parquet to MinIO
+3. **load_raw_to_postgres** — loads Parquet files from MinIO into `raw.daily_prices` in Postgres
 
 **Schedule:** daily at 7:00 PM IST (13:30 UTC), after US and Indian markets have closed.
 
@@ -166,3 +167,120 @@ docker compose exec postgres psql -U marketpulse -d marketpulse -c "SELECT ticke
 ```
 
 Stop either script with `Ctrl+C`. The consumer commits every 10 messages and shuts down cleanly on interrupt.
+
+## Transformation Layer
+
+### Why dbt?
+
+[dbt](https://www.getdbt.com/) (data build tool) transforms raw data in your warehouse using version-controlled SQL models. It separates **staging** (thin cleaning, one-to-one with sources) from **marts** (analytical tables ready for dashboards and ML). Tests run alongside models so data quality is enforced in CI, not discovered in production.
+
+### Architecture
+
+```
+MinIO Parquet  →  parquet_loader.py  →  raw.daily_prices  ─┐
+                                                              ├─→ dbt staging  →  dbt marts  →  analytics.*
+streaming.market_ticks  ────────────────────────────────────┘
+```
+
+| Layer | What it is | Models |
+|-------|-----------|--------|
+| **Raw** | Loaded batch data in Postgres | `raw.daily_prices` |
+| **Staging** | Cleaned, filtered views | `stg_daily_prices`, `stg_market_ticks` |
+| **Marts** | Analytical tables | `daily_returns`, `moving_averages`, `volatility_metrics` |
+
+All dbt model outputs land in the **`analytics`** schema in Postgres.
+
+### Mart models
+
+- **`daily_returns`** — daily return %, previous close, positive/negative flag (primary ML feature table)
+- **`moving_averages`** — 7/20/50-day SMAs and price-vs-MA20 ratio
+- **`volatility_metrics`** — 5/20-day rolling std of returns, intraday range %, 20-day avg volume
+
+### Load raw data and run dbt
+
+Ensure Postgres and MinIO are running and batch Parquet files exist in MinIO:
+
+```powershell
+docker compose up -d postgres minio
+python ingestion/parquet_loader.py
+```
+
+Verify raw data loaded:
+
+```powershell
+docker compose exec postgres psql -U marketpulse -d marketpulse -c "SELECT COUNT(*) FROM raw.daily_prices;"
+```
+
+Install dbt and run models (from project root, with venv active and `.env` loaded):
+
+```powershell
+pip install dbt-postgres
+$env:DBT_PROFILES_DIR="./dbt"
+dbt run --project-dir dbt
+dbt test --project-dir dbt
+```
+
+Query a mart:
+
+```powershell
+docker compose exec postgres psql -U marketpulse -d marketpulse -c "SELECT ticker, date, daily_return, is_positive FROM analytics.daily_returns WHERE ticker = 'NVDA' ORDER BY date DESC LIMIT 5;"
+```
+
+The Airflow DAG runs `load_raw_to_postgres` automatically after each batch ingestion.
+
+## ML Forecasting Layer
+
+### What the model predicts
+
+The XGBoost classifier predicts **next-day direction**: will a stock go **UP** or **DOWN** tomorrow? This is a binary classification problem built on features from the dbt mart tables — the payoff of building the transformation layer properly.
+
+| Feature | Source mart |
+|---------|-------------|
+| `close`, `volume` | `raw.daily_prices` |
+| `daily_return`, `prev_close` | `analytics.daily_returns` |
+| `ma_7`, `ma_20`, `ma_50`, `price_vs_ma20` | `analytics.moving_averages` |
+| `rolling_std_20`, `rolling_std_5`, `high_low_range`, `avg_volume_20` | `analytics.volatility_metrics` |
+
+**Target:** `target_direction` — 1 if next day's return > 0, else 0.
+
+### Time-based train/test split
+
+Financial data is **time-ordered**. We hold out the **last 20% of calendar dates** as the test set instead of random shuffling. Random splits leak future returns into training and produce unrealistically high accuracy — a common mistake in financial ML that looks good in notebooks but fails in production.
+
+### Architecture
+
+```
+dbt marts (analytics.*)  →  feature_store.py  →  train_model.py  →  ml/model/*.pkl
+                                                          ↓
+                                                   predictor.py  →  UP/DOWN + confidence
+```
+
+### Run ML pipeline
+
+Ensure Postgres is running and dbt marts are built (`dbt run --project-dir dbt`).
+
+Install ML dependencies:
+
+```powershell
+pip install xgboost scikit-learn joblib
+```
+
+**1. Inspect features:**
+
+```powershell
+python ml/feature_store.py
+```
+
+**2. Train and save model:**
+
+```powershell
+python ml/train_model.py
+```
+
+**3. Run predictions for all tickers:**
+
+```powershell
+python ml/predictor.py
+```
+
+Model artifacts are saved to `ml/model/` (gitignored): `xgb_model.pkl`, `scaler.pkl`, `features.json`.

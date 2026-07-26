@@ -1,10 +1,13 @@
 """
 MarketPulse batch ingestion DAG.
 
-Pulls daily OHLCV history from Yahoo Finance for all configured tickers and
-uploads Parquet files to MinIO (marketpulse-raw bucket).
+Pulls daily OHLCV history from Yahoo Finance for all configured tickers,
+uploads Parquet files to MinIO (marketpulse-raw bucket), then loads them
+into Postgres raw.daily_prices for dbt transformations.
 
 Schedule: daily at 7:00 PM IST (13:30 UTC) — after US and Indian markets close.
+
+Task chain: load_tickers → run_batch_ingestion → load_raw_to_postgres
 
 Manual test (once Airflow is running):
 
@@ -40,12 +43,12 @@ SCHEDULE_CRON = "30 13 * * *"
 )
 def marketpulse_batch_ingestion():
     """
-    Daily batch pull: Yahoo Finance → Parquet → MinIO.
+    Daily batch pipeline: Yahoo Finance → Parquet → MinIO → Postgres raw layer.
 
-    Split into two tasks rather than one monolithic task so that:
-      - load_tickers can be unit-tested and retried independently of the pull
-      - failures in the fetch/upload step don't re-read config unnecessarily
-      - the Airflow graph view shows clear stage boundaries (config → ingest)
+    Three-task chain so each stage can fail/retry independently:
+      - load_tickers: read config/tickers.yaml
+      - run_batch_ingestion: fetch OHLCV and upload Parquet to MinIO
+      - load_raw_to_postgres: load Parquet into raw.daily_prices for dbt
     """
 
     @task
@@ -67,7 +70,13 @@ def marketpulse_batch_ingestion():
             )
         return summary
 
-    run_batch_ingestion(load_tickers())
+    @task
+    def load_raw_to_postgres(_ingestion_summary: dict) -> dict:
+        from ingestion.parquet_loader import run_loader
+
+        return run_loader()
+
+    load_raw_to_postgres(run_batch_ingestion(load_tickers()))
 
 
 marketpulse_batch_ingestion()

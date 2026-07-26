@@ -1,0 +1,38 @@
+version: 2
+
+models:
+  - name: daily_returns
+    description: Daily return calculations — primary ML feature table
+    columns:
+      - name: ticker
+        tests:
+          - not_null
+      - name: date
+        tests:
+          - not_null
+      - name: close
+        tests:
+          - not_null
+
+  - name: moving_averages
+    description: 7/20/50-day moving averages and price-vs-MA20 ratio
+    columns:
+      - name: ticker
+        tests:
+          - not_null
+      - name: date
+        tests:
+          - not_null
+      - name: close
+        tests:
+          - not_null
+
+  - name: volatility_metrics
+    description: Rolling volatility, intraday range, and average volume
+    columns:
+      - name: ticker
+        tests:
+          - not_null
+      - name: date
+        tests:
+          - not_null

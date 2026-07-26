@@ -1,0 +1,43 @@
+version: 2
+
+sources:
+  - name: raw
+    description: Batch OHLCV data loaded from MinIO Parquet files
+    schema: raw
+    tables:
+      - name: daily_prices
+        description: Daily price bars for all configured tickers
+        loaded_at_field: ingested_at
+        freshness:
+          warn_after: {count: 1, period: day}
+          error_after: {count: 2, period: day}
+        columns:
+          - name: ticker
+            description: Yahoo Finance symbol
+            tests:
+              - not_null
+          - name: date
+            description: Trading date
+            tests:
+              - not_null
+          - name: close
+            description: Closing price
+            tests:
+              - not_null
+
+  - name: streaming
+    description: Simulated intraday tick data from Redpanda consumer
+    schema: streaming
+    tables:
+      - name: market_ticks
+        description: 1-minute OHLCV ticks consumed from market-ticks topic
+        columns:
+          - name: ticker
+            tests:
+              - not_null
+          - name: ts
+            tests:
+              - not_null
+          - name: close
+            tests:
+              - not_null

@@ -1,0 +1,32 @@
+version: 2
+
+models:
+  - name: stg_daily_prices
+    description: Cleaned daily OHLCV from raw batch data
+    columns:
+      - name: price_id
+        tests:
+          - unique
+          - not_null
+      - name: ticker
+        tests:
+          - not_null
+      - name: date
+        tests:
+          - not_null
+      - name: close
+        tests:
+          - not_null
+
+  - name: stg_market_ticks
+    description: Cleaned intraday ticks from streaming pipeline
+    columns:
+      - name: ticker
+        tests:
+          - not_null
+      - name: ts
+        tests:
+          - not_null
+      - name: close
+        tests:
+          - not_null
