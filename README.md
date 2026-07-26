@@ -284,3 +284,56 @@ python ml/predictor.py
 ```
 
 Model artifacts are saved to `ml/model/` (gitignored): `xgb_model.pkl`, `scaler.pkl`, `features.json`.
+
+## LLM Explanation Layer
+
+### What this layer does
+
+The LLM explanation layer turns ML predictions and dbt mart data into **plain-English summaries** grounded entirely in your local Postgres data. It does not search the web or invent news — every number in the explanation comes from `context_builder.py`.
+
+### Prompt design
+
+| Design choice | Why |
+|---------------|-----|
+| **Strict system prompt** | Prevents hallucination — model may only cite provided data |
+| **Facts vs prediction** | Clearly separates historical data from probabilistic ML output |
+| **Temperature 0.3** | Low creativity = consistent, factual output (not storytelling) |
+| **200-word limit, 3 paragraphs** | Recent action → technicals → prediction + caveat |
+| **No buy/sell advice** | Regulatory and trust safeguard |
+
+### Architecture
+
+```
+Postgres marts + ML prediction  →  context_builder.py  →  prompt_builder.py  →  explainer.py  →  plain-English text
+```
+
+Switch providers via `LLM_PROVIDER` in `.env`:
+- `groq` (default) — uses `llama-3.1-8b-instant` via Groq free tier
+- `ollama` — uses local Ollama at `OLLAMA_BASE_URL`
+
+### Get a free Groq API key
+
+1. Go to [console.groq.com](https://console.groq.com)
+2. Sign up (free, no credit card required for basic usage)
+3. Create an API key under **API Keys**
+4. Add it to `.env`: `GROQ_API_KEY=your_key_here`
+
+### Run an explanation
+
+Ensure Postgres, dbt marts, and ML model artifacts exist. Install dependencies:
+
+```powershell
+pip install groq requests
+```
+
+Run for NVDA (default in `__main__`):
+
+```powershell
+python llm/explainer.py
+```
+
+To explain another ticker programmatically:
+
+```powershell
+python -c "from llm.explainer import explain_ticker; r = explain_ticker('AAPL'); print(r['explanation'])"
+```

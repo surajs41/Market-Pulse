@@ -11,3 +11,5 @@ dbt-postgres
 xgboost
 scikit-learn
 joblib
+groq
+requests
