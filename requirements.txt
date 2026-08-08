@@ -13,3 +13,7 @@ scikit-learn
 joblib
 groq
 requests
+fastapi
+uvicorn
+streamlit
+plotly

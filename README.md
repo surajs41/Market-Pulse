@@ -337,3 +337,105 @@ To explain another ticker programmatically:
 ```powershell
 python -c "from llm.explainer import explain_ticker; r = explain_ticker('AAPL'); print(r['explanation'])"
 ```
+
+## API Layer
+
+The FastAPI serving layer exposes batch data, ML forecasts, and LLM explanations over HTTP. Auto-generated interactive docs are available at http://localhost:8001/docs (Swagger UI).
+
+### Endpoints
+
+| Method | Path | Purpose |
+|--------|------|---------|
+| `GET` | `/health` | Liveness check (no DB) |
+| `GET` | `/tickers` | List all configured tickers |
+| `GET` | `/price/{ticker}` | Last 30 days OHLCV + daily return |
+| `GET` | `/forecast/{ticker}` | ML next-day UP/DOWN prediction |
+| `GET` | `/explain/{ticker}` | LLM plain-English explanation (1-hour in-memory cache) |
+
+All errors return `{"error": "message"}` — never raw Python tracebacks.
+
+### Start the API
+
+From project root (with venv active, Postgres running, ML model trained):
+
+```powershell
+uvicorn api.main:app --host 0.0.0.0 --port 8001 --reload
+```
+
+Or on Linux/macOS:
+
+```bash
+bash scripts/start_api.sh
+```
+
+### Explore with Swagger UI
+
+Open http://localhost:8001/docs — FastAPI auto-generates interactive API documentation. You can try every endpoint from the browser without writing curl commands.
+
+### Example requests
+
+```powershell
+curl http://localhost:8001/health
+curl http://localhost:8001/tickers
+curl http://localhost:8001/price/NVDA
+curl http://localhost:8001/forecast/NVDA
+curl http://localhost:8001/explain/NVDA
+```
+
+Prerequisites for full functionality:
+- Postgres + dbt marts for `/price`
+- `python ml/train_model.py` for `/forecast`
+- Valid `GROQ_API_KEY` in `.env` for `/explain`
+
+## Dashboard
+
+The Streamlit dashboard is a read-only UI over the FastAPI layer — it never connects to Postgres or ML models directly. All charts, forecasts, and explanations come from HTTP calls to the API.
+
+**URL:** http://localhost:8501
+
+### Start the dashboard
+
+FastAPI must be running first on port **8001**:
+
+```powershell
+streamlit run dashboard/app.py
+```
+
+Override the API URL if needed:
+
+```powershell
+$env:MARKETPULSE_API_URL="http://localhost:8001"
+streamlit run dashboard/app.py
+```
+
+### Running the full stack
+
+Start services in this order:
+
+1. **Infrastructure** (Postgres, MinIO, Redpanda, Airflow):
+
+```powershell
+docker compose up -d
+```
+
+2. **API** (terminal 1):
+
+```powershell
+uvicorn api.main:app --host 0.0.0.0 --port 8001 --reload
+```
+
+3. **Dashboard** (terminal 2):
+
+```powershell
+streamlit run dashboard/app.py
+```
+
+Then open http://localhost:8501 — select a ticker in the sidebar and click **Analyze**.
+
+### Dashboard features
+
+- Interactive Plotly candlestick chart with MA7 / MA20 / MA50 overlays
+- ML next-day UP/DOWN forecast with confidence bar
+- LLM plain-English explanation (with cached/fresh badge)
+- Recent 10-day price table with color-coded returns
+- Sidebar API health indicator (green/red)
